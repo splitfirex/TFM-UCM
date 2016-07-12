@@ -1,86 +1,60 @@
-
 #include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <ctime>
+
+#define __CL_ENABLE_EXCEPTIONS
 #include <CL/cl.hpp>
+#include "FactoryOpenCL.h"
 
-int main(){
-	//get all platforms (drivers)
-	std::vector<cl::Platform> all_platforms;
-	cl::Platform::get(&all_platforms);
-	if (all_platforms.size() == 0){
-		std::cout << " No platforms found. Check OpenCL installation!\n";
-		exit(1);
+using namespace std;
+
+
+int main() {
+	const size_t N = 1 << 20;
+	try{
+		FactoryOpenCL *program = new FactoryOpenCL();
+
+		program->compilarFuente("./kernel.cl");
+		cl::Kernel add = program->crearKernel("add");
+		cl::CommandQueue queue = program->cola();
+		const clock_t begin_time = std::clock();
+		// Prepare input data.
+		std::vector<float> a(N, 1);
+		std::vector<float> b(N, 2);
+		std::vector<float> c(N, 0);
+
+		// Allocate device buffers and transfer input data to device.
+		cl::Buffer A(program->contexto(), CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, a.size() * sizeof(float), a.data());
+
+		cl::Buffer B(program->contexto(), CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, b.size() * sizeof(float), b.data());
+
+		cl::Buffer C(program->contexto(), CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, c.size() * sizeof(float), c.data());
+
+		// Set kernel parameters.
+		add.setArg(0, C);
+		add.setArg(1, B);
+		add.setArg(2, C);
+
+		// Launch kernel on the compute device.
+		queue.enqueueNDRangeKernel(add, cl::NullRange, N , cl::NullRange);
+		queue.enqueueNDRangeKernel(add, cl::NullRange, N , cl::NullRange);
+
+
+		// Get result back to host.
+		queue.enqueueReadBuffer(C, CL_TRUE, 0, c.size() * sizeof(float), c.data());
+
+		// Should get '3' here.
+		std::cout << c[N-1] << std::endl;
 	}
-	cl::Platform default_platform = all_platforms[0];
-	std::cout << "Using platform: " << default_platform.getInfo<CL_PLATFORM_NAME>() << "\n";
-
-	//get default device of the default platform
-	std::vector<cl::Device> all_devices;
-	default_platform.getDevices(CL_DEVICE_TYPE_ALL, &all_devices);
-	if (all_devices.size() == 0){
-		std::cout << " No devices found. Check OpenCL installation!\n";
+	catch (const cl::Error &err) {
+		std::cerr
+			<< "OpenCL error: "
+			<< err.what() << "(" << err.err() << ")"
+			<< std::endl;
 		system("pause");
-		exit(1);
-	}
-	cl::Device default_device = all_devices[0];
-	std::cout << "Using device: " << default_device.getInfo<CL_DEVICE_NAME>() << "\n";
-	system("pause");
-
-	cl::Context context({ default_device });
-
-	cl::Program::Sources sources;
-
-	// kernel calculates for each element C=A+B
-	std::string kernel_code =
-		"   void kernel simple_add(global const int* A, global const int* B, global int* C){       "
-		"       C[get_global_id(0)]=A[get_global_id(0)]+B[get_global_id(0)];                 "
-		"   }                                                                               ";
-	sources.push_back({ kernel_code.c_str(), kernel_code.length() });
-
-	cl::Program program(context, sources);
-	if (program.build({ default_device }) != CL_SUCCESS){
-		std::cout << " Error building: " << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(default_device) << "\n";
-		system("pause");
-		exit(1);
-	}
-
-
-	// create buffers on the device
-	cl::Buffer buffer_A(context, CL_MEM_READ_WRITE, sizeof(int) * 10);
-	cl::Buffer buffer_B(context, CL_MEM_READ_WRITE, sizeof(int) * 10);
-	cl::Buffer buffer_C(context, CL_MEM_READ_WRITE, sizeof(int) * 10);
-
-	int A[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-	int B[] = { 0, 1, 2, 0, 1, 2, 0, 1, 2, 0 };
-
-	//create queue to which we will push commands for the device.
-	cl::CommandQueue queue(context, default_device);
-
-	//write arrays A and B to the device
-	queue.enqueueWriteBuffer(buffer_A, CL_TRUE, 0, sizeof(int) * 10, A);
-	queue.enqueueWriteBuffer(buffer_B, CL_TRUE, 0, sizeof(int) * 10, B);
-
-
-	//run the kernel
-	//cl::KernelFunctor simple_add(cl::Kernel(program, "simple_add"), queue, cl::NullRange, cl::NDRange(10), cl::NullRange);
-	//simple_add(buffer_A, buffer_B, buffer_C);
-
-	//alternative way to run the kernel
-	cl::Kernel kernel_add=cl::Kernel(program,"simple_add");
-	kernel_add.setArg(0,buffer_A);
-	kernel_add.setArg(1,buffer_B);
-	kernel_add.setArg(2,buffer_C);
-	queue.enqueueNDRangeKernel(kernel_add,cl::NullRange,cl::NDRange(10),cl::NullRange);
-	queue.finish();
-
-	int C[10];
-	//read result C from the device to array C
-	queue.enqueueReadBuffer(buffer_C, CL_TRUE, 0, sizeof(int) * 10, C);
-
-	std::cout << " result: \n";
-	for (int i = 0; i<10; i++){
-		std::cout << C[i] << " ";
+		return 1;
 	}
 	system("pause");
-	return 0;
-	
 }
